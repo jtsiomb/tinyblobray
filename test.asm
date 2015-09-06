@@ -144,23 +144,29 @@ calc_pixel:
 	fldz	; push dummy prev distance
 .steploop:
 	fstp st0 ; pop previous iteration distance
-	; if pos.z >= farclip break
+	; if pos.z > farclip break
 	fld dword [rpos + 8]
-	fcom dword [farclip]
-	fstsw ax
-	fwait
-	sahf
-	jae .escape
+	fld dword [farclip]
+	fcomip st0, st1
+	jb .escape
+	;fcom dword [farclip]
+	;fstsw ax
+	;fwait
+	;sahf
+	;ja .escape
 
 	; calculate distance field and break if below threshold
 	fld dword [rpos + 4]
 	fld dword [rpos]
 	call distfield
-	fcom dword [dthres]
-	fstsw ax
-	fwait
-	sahf
-	jb .done
+	fld dword [dthres]
+	fcomip st0, st1
+	ja .done
+	;fcom dword [dthres]
+	;fstsw ax
+	;fwait
+	;sahf
+	;jb .done
 
 	; not good enough, step some more
 	; posx = posx + dirx * dist
@@ -248,27 +254,27 @@ normalize:
 	fld1
 	fdiv		; {1/len, x, y, z}
 	fxch st3	; {z, x, y, 1/len}
-	fmul st3
+	fmul st0, st3	; {z/len, x, y, 1/len}
 	fxch st2	; {y, x, z/len, 1/len}
-	fmul st3
+	fmul st0, st3	; {y/len, x, z/len, 1/len}
 	fxch st1	; {x, y/len, z/len, 1/len}
-	fmul st3
+	fmul st0, st3	; {x/len, y/len, z/len, 1/len}
 	ffree st3
 	ret
 
 ; distfield(x, y, z): (st0, st1, st2) -> st0
 distfield:
-	fld dword [ballpos]
-	fsub
-	fxch st1
-	fld dword [ballpos + 4]
-	fsub
-	fxch st2
-	fld dword [ballpos + 8]
-	fsub
-	call length
-	fld dword [ballrad]
-	fsubr
+	fld dword [ballpos]	; {bx, x, y, z}
+	fsub			; {bx - x, y, z}
+	fxch st1		; {y, bx - x, z}
+	fld dword [ballpos + 4]	; {by, y, bx - x, z}
+	fsub			; {by - y, bx - x, z}
+	fxch st2		; {z, bx - x, by - y}
+	fld dword [ballpos + 8]	; {bz, z, bx - x, by - y}
+	fsub			; {bz - z, bx - x, by - y}
+	call length		; {len}
+	fld dword [ballrad]	; {rad, len}
+	fsubr			; {len - rad}
 	ret
 
 ; shade(x, y, z, dist): (st0, st1, st2, st3) -> [st0, st1, st2]
