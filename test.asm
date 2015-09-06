@@ -146,27 +146,27 @@ calc_pixel:
 	fstp st0 ; pop previous iteration distance
 	; if pos.z > farclip break
 	fld dword [rpos + 8]
-	fld dword [farclip]
-	fcomip st0, st1
-	jb .escape
-	;fcom dword [farclip]
-	;fstsw ax
-	;fwait
-	;sahf
-	;ja .escape
+	;fld dword [farclip]
+	;fcomip st0, st1
+	;jb .escape
+	fcom dword [farclip]
+	fstsw ax
+	fwait
+	sahf
+	ja .escape
 
 	; calculate distance field and break if below threshold
 	fld dword [rpos + 4]
 	fld dword [rpos]
 	call distfield
-	fld dword [dthres]
-	fcomip st0, st1
-	ja .done
-	;fcom dword [dthres]
-	;fstsw ax
-	;fwait
-	;sahf
-	;jb .done
+	;fld dword [dthres]
+	;fcomip st0, st1
+	;ja .done
+	fcom dword [dthres]
+	fstsw ax
+	fwait
+	sahf
+	jb .done
 
 	; not good enough, step some more
 	; posx = posx + dirx * dist
@@ -210,17 +210,17 @@ calc_prim_dir:
 	; x = 1.3333 * (px / 160.0 - 1.0)
 	fdiv dword [f160]	; st0 <- px / 160.0
 	fld1
-	fsubr			; st0 <- st0 - 1.0
+	fsub			; st0 <- st0 - 1.0
 	fmul dword [faspect]	; st0 <- st0 * aspect
 	fxch			; exchange with st1 to work on py now
 	; y = 1.0 - (py / 100.0)
 	fdiv dword [f100]	; st0 <- py / 100.0
 	fld1
-	fsub			; st0 <- 1.0 - st0
+	fsubr			; st0 <- 1.0 - st0
 	; z = 1.0 / tan(50deg / 2.0) ~ 2.14... ~ PI - 1
 	fld1
 	fldpi
-	fsub
+	fsubr
 	; we end up with st {z, y, x}
 	fxch st2		; put them in the correct order
 	call normalize
@@ -252,7 +252,7 @@ normalize:
 	fld st2		; push x
 	call length	; now st{len, x, y, z}
 	fld1
-	fdiv		; {1/len, x, y, z}
+	fdivr		; {1/len, x, y, z}
 	fxch st3	; {z, x, y, 1/len}
 	fmul st0, st3	; {z/len, x, y, 1/len}
 	fxch st2	; {y, x, z/len, 1/len}
@@ -265,16 +265,16 @@ normalize:
 ; distfield(x, y, z): (st0, st1, st2) -> st0
 distfield:
 	fld dword [ballpos]	; {bx, x, y, z}
-	fsub			; {bx - x, y, z}
-	fxch st1		; {y, bx - x, z}
-	fld dword [ballpos + 4]	; {by, y, bx - x, z}
-	fsub			; {by - y, bx - x, z}
-	fxch st2		; {z, bx - x, by - y}
-	fld dword [ballpos + 8]	; {bz, z, bx - x, by - y}
-	fsub			; {bz - z, bx - x, by - y}
+	fsub			; {x - bx, y, z}
+	fxch st1		; {y, x - bx, z}
+	fld dword [ballpos + 4]	; {y, by, x - bx, z}
+	fsub			; {y - by, x - bx, z}
+	fxch st2		; {z, x - bx, y - by}
+	fld dword [ballpos + 8]	; {bz, z, x - bx, y - by}
+	fsub			; {z - bz, x - bx, y - by}
 	call length		; {len}
 	fld dword [ballrad]	; {rad, len}
-	fsubr			; {len - rad}
+	fsub			; {len - rad}
 	ret
 
 ; shade(x, y, z, dist): (st0, st1, st2, st3) -> [st0, st1, st2]
