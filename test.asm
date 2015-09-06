@@ -16,6 +16,10 @@ f100	dd 100.0
 faspect	dd 1.333333
 dthres	dd 0.01
 farclip	dd 20.0
+ldir	dd -0.3419
+	dd 0.2279
+	dd -0.9116
+delta	dd 0.001
 
 	section .bss
 winoffs	resd 1
@@ -24,6 +28,8 @@ py	resd 1
 tmp	resd 1
 rdir	resd 3
 rpos	resd 3
+normal	resd 3
+diffuse	resd 1
 	
 	section .text
 main:
@@ -59,21 +65,33 @@ main:
 	call calc_pixel	; args: x(0), y(1). returns rgb(0,1,2)
 	; red result
 	fmul dword [f255]
-	fistp dword [ds:tmp]
-	mov eax, [tmp]
+	fistp dword [tmp]
+	mov ax, [tmp]
+	cmp ax, 255
+	jbe .skip_redclamp
+	mov ax, 255
+.skip_redclamp:
 	shl ax, 8
 	and ax, 0f800h
 	; green result
 	fmul dword [f255]
 	fistp dword [tmp]
-	mov ebx, [tmp]
+	mov bx, [tmp]
+	cmp bx, 255
+	jbe .skip_greenclamp
+	mov bx, 255
+.skip_greenclamp:
 	shl bx, 3
 	and bx, 7e0h
 	or ax, bx
 	; blue result
 	fmul dword [f255]
 	fistp dword [tmp]
-	mov ebx, [tmp]
+	mov bx, [tmp]
+	cmp bx, 255
+	jbe .skip_blueclamp
+	mov bx, 255
+.skip_blueclamp:
 	shr bx, 3
 	or ax, bx
 
@@ -262,6 +280,18 @@ normalize:
 	ffree st3
 	ret
 
+; dotproduct(ax, ay, az, bx, by, bz): (st0 ... st5) -> st0
+dotproduct:
+	fxch st4	; {by, ay, az, bx, ax, bz}
+	fmul		; {ay*by, az, bx, ax, bz}
+	fxch st4	; {bz, az, bx, ax, ay*by}
+	fmul		; {bz*az, bx, ax, ay*by}
+	fxch st2	; {ax, bx, bz*az, ay*by}
+	fmul		; {ax*bx, az*bz, ay*by}
+	fadd
+	fadd
+	ret
+
 ; distfield(x, y, z): (st0, st1, st2) -> st0
 distfield:
 	fld dword [ballpos]	; {bx, x, y, z}
@@ -279,14 +309,78 @@ distfield:
 
 ; shade(x, y, z, dist): (st0, st1, st2, st3) -> [st0, st1, st2]
 shade:
-	; TODO
-	fstp st0
-	fstp st0
-	fstp st0
-	fstp st0
+	; XXX relying on the incidental fact that xyz are also in rpos
+	; calculate normal
+	fadd dword [delta]
+	call distfield
+	fsub st0, st1
+	fxch			; {dist, nx}
+	fld dword [rpos + 8]
+	fld dword [rpos + 4]
+	fadd dword [delta]
+	fld dword [rpos]
+	call distfield
+	fsub st0, st1		; {ny, dist, nx}
+	fxch			; {dist, ny, nx}
+	fld dword [rpos + 8]
+	fadd dword [delta]
+	fld dword [rpos + 4]
+	fld dword [rpos]
+	call distfield
+	fsubr			; {nz, ny, nx}
+	fxch st2		; {nx, ny, nz}
+	call normalize
+
+	; save normal
+	fst dword [normal]
+	fld st1
+	fstp dword [normal + 4]
+	fld st2
+	fstp dword [normal + 8]
+
+	; calculate ndotl for diffuse
+	fld dword [ldir + 8]
+	fld dword [ldir + 4]
+	fld dword [ldir]	; {lx, ly, lz, nx, ny, nz}
+	call dotproduct
+	fabs
+	fstp dword [diffuse]	; save diffuse for later
+
+	; calculate half-angle vector (assume eyedir is [0, 0, -1])
+	fld dword [ldir + 8]
 	fld1
-	fldz
-	fld1
+	fsub
+	fld dword [ldir + 4]
+	fld dword [ldir]
+	call normalize
+	
+	; calculate ndoth for specular
+	; restore normal
+	fld dword [normal + 8]
+	fld dword [normal + 4]
+	fld dword [normal]
+	call dotproduct
+	fabs
+	; raise it to the specular power
+	fld st0
+	fmul	; 2nd
+	fld st0
+	fmul	; 4th
+	fld st0
+	fmul	; 8th
+	fld st0
+	fmul	; 16th
+	fld st0
+	fmul	; 32nd
+	fld st0
+	fmul	; 64th
+
+	; let's make the color {spec, spec, diffuse + spec}
+	fld dword [diffuse]
+	fld st1
+	fadd
+	fxch
+	fld st0
 	ret
 
 ;	section .bss
