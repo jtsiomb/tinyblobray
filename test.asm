@@ -6,19 +6,24 @@
 	jmp main
 
 %define VMEM_WIN_SIZE	65536
+%define MAX_STEPS	64
+
 	section .data
-f255:	dd 255.0
-f160:	dd 160.0
-f100:	dd 100.0
-faspect: dd 1.333333
+f2	dd 2.0
+f255	dd 255.0
+f160	dd 160.0
+f100	dd 100.0
+faspect	dd 1.333333
+dthres	dd 0.01
+farclip	dd 20.0
 
 	section .bss
-winoffs: resd 1
-px:	resd 1
-py:	resd 1
-tmp:	resd 1
-rdir:	resd 3
-rpos:	resd 3
+winoffs	resd 1
+px	resd 1
+py	resd 1
+tmp	resd 1
+rdir	resd 3
+rpos	resd 3
 	
 	section .text
 main:
@@ -34,17 +39,17 @@ main:
 	push word 0a000h
 	pop es
 
-mainloop:
+.mainloop:
 	xor eax, eax
 	mov [winoffs], eax
 	call set_vmem_win	; reset vmem window
 	xor di, di		; di will be the vmem pointer within the window
 	mov ecx, VMEM_WIN_SIZE	; ecx will count down the vmem window bytes
 	xor ebx, ebx		; ebx: y
-yloop:
+.yloop:
 	mov [py], ebx
 	xor eax, eax		; eax: x
-xloop:
+.xloop:
 	push ecx		; save byte counter
 	mov [px], eax
 	xor eax, eax
@@ -92,13 +97,13 @@ xloop:
 	mov eax, [px]
 	inc eax			; x++
 	cmp eax, 320
-	jnz xloop
+	jnz .xloop
 	; end of xloop
 
 	mov ebx, [py]
 	inc ebx			; y++
 	cmp ebx, 200
-	jnz yloop
+	jnz .yloop
 	; end of yloop
 	
 	; check for keypress and loop back if there isn't one
@@ -107,7 +112,7 @@ xloop:
 	mov dl, al
 	pop eax
 	dec dl
-	jnz mainloop
+	jnz .mainloop
 
 	; restore video mode
 	mov ah, 4fh
@@ -130,6 +135,68 @@ set_vmem_win:
 ; calc_pixel(x [st0], y [st1]) -> r [st0], g [st1], b [st2]
 calc_pixel:
 	call calc_prim_dir
+	xor eax, eax
+	mov [rpos], eax
+	mov [rpos + 4], eax
+	mov [rpos + 8], eax
+
+	mov ecx, MAX_STEPS
+	fldz	; push dummy prev distance
+.steploop:
+	fstp st0 ; pop previous iteration distance
+	; if pos.z >= farclip break
+	fld dword [rpos + 8]
+	fcom dword [farclip]
+	fstsw ax
+	fwait
+	sahf
+	jae .escape
+
+	; calculate distance field and break if below threshold
+	fld dword [rpos + 4]
+	fld dword [rpos]
+	call distfield
+	fcom dword [dthres]
+	fstsw ax
+	fwait
+	sahf
+	jb .done
+
+	; not good enough, step some more
+	; posx = posx + dirx * dist
+	fld dword [rdir]	; { dirx, dist }
+	fmul st0, st1		; { dirx * dist, dist }
+	fld dword [rpos]	; { posx, dirx * dist, dist }
+	fadd			; { posx + dirx * dist, dist }
+	fstp dword [rpos]
+	; posy = posy + diry * dist
+	fld dword [rdir + 4]
+	fmul st0, st1
+	fld dword [rpos + 4]
+	fadd
+	fstp dword [rpos + 4]
+	; posz = posz + dirz * dist
+	fld dword [rdir + 8]
+	fmul st0, st1
+	fld dword [rpos + 8]
+	fadd
+	fstp dword [rpos + 8]
+
+	dec ecx
+	jnz .steploop
+.escape:
+	; didn't hit anything, return black
+	fstp st0
+	fldz
+	fldz
+	fldz
+	ret
+.done:
+	; success (distance is still in st0)
+	fld dword [rpos + 8]
+	fld dword [rpos + 4]
+	fld dword [rpos]
+	call shade
 	ret
 
 ; calc_prim_dir(x [st0], y [st1]): sets global rdir vector
@@ -188,3 +255,38 @@ normalize:
 	fmul st3
 	ffree st3
 	ret
+
+; distfield(x, y, z): (st0, st1, st2) -> st0
+distfield:
+	fld dword [ballpos]
+	fsub
+	fxch st1
+	fld dword [ballpos + 4]
+	fsub
+	fxch st2
+	fld dword [ballpos + 8]
+	fsub
+	call length
+	fld dword [ballrad]
+	fsubr
+	ret
+
+; shade(x, y, z, dist): (st0, st1, st2, st3) -> [st0, st1, st2]
+shade:
+	; TODO
+	fstp st0
+	fstp st0
+	fstp st0
+	fstp st0
+	fld1
+	fldz
+	fld1
+	ret
+
+;	section .bss
+;ballpos resd 3
+	section .data
+ballpos	dd 0.0
+	dd 0.0
+	dd 8.0
+ballrad dd 1.0
