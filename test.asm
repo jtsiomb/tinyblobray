@@ -33,9 +33,10 @@ diffuse	resd 1
 	
 	section .text
 main:
-	mov eax, cr0		; Start probe, get CR0
-	and eax, 0fffffff3h	; clear TS and EM to force fpu access
-	mov cr0, eax		; store control word
+	; make sure cr0 ts and em bits are clear to utilize the fpu
+	;mov eax, cr0
+	;and eax, 0fffffff3h
+	;mov cr0, eax
 	finit
 
 	mov ax, 4f02h	; set video mode
@@ -164,9 +165,6 @@ calc_pixel:
 	fstp st0 ; pop previous iteration distance
 	; if pos.z > farclip break
 	fld dword [rpos + 8]
-	;fld dword [farclip]
-	;fcomip st0, st1
-	;jb .escape
 	fcom dword [farclip]
 	fstsw ax
 	fwait
@@ -177,9 +175,6 @@ calc_pixel:
 	fld dword [rpos + 4]
 	fld dword [rpos]
 	call distfield
-	;fld dword [dthres]
-	;fcomip st0, st1
-	;ja .done
 	fcom dword [dthres]
 	fstsw ax
 	fwait
@@ -292,17 +287,27 @@ dotproduct:
 	fadd
 	ret
 
+; distance(ax, ay, az, bx, by, bz): (st0, ... st5) -> st0
+distance:
+	fxch st4	; {by, ay, az, bx, ax, bz}
+	fsub		; {ay-by, az, bx, ax, bz}
+	fxch st4	; {bz, az, bx, ax, ay-by}
+	fsub		; {az-bz, bx, ax, ay-by}
+	fxch st2	; {ax, bx, az-bz, ay-by}
+	fsub		; {dx, dz, dy}
+	fld st2		; {dy, dx, dz, dy}
+	fld st2		; {dz, dy, dx, dz, dy}
+	fld st2		; {dx, dz, dy, dx, dz, dy}
+	call dotproduct
+	fsqrt
+	ret
+	
 ; distfield(x, y, z): (st0, st1, st2) -> st0
 distfield:
-	fld dword [ballpos]	; {bx, x, y, z}
-	fsub			; {x - bx, y, z}
-	fxch st1		; {y, x - bx, z}
-	fld dword [ballpos + 4]	; {y, by, x - bx, z}
-	fsub			; {y - by, x - bx, z}
-	fxch st2		; {z, x - bx, y - by}
-	fld dword [ballpos + 8]	; {bz, z, x - bx, y - by}
-	fsub			; {z - bz, x - bx, y - by}
-	call length		; {len}
+	fld dword [ballpos + 8]
+	fld dword [ballpos + 4]
+	fld dword [ballpos]
+	call distance
 	fld dword [ballrad]	; {rad, len}
 	fsub			; {len - rad}
 	ret
@@ -314,21 +319,23 @@ shade:
 	fadd dword [delta]
 	call distfield
 	fsub st0, st1
-	fxch			; {dist, nx}
+	fstp dword [normal]
+
 	fld dword [rpos + 8]
 	fld dword [rpos + 4]
 	fadd dword [delta]
 	fld dword [rpos]
 	call distfield
-	fsub st0, st1		; {ny, dist, nx}
-	fxch			; {dist, ny, nx}
+	fsub st0, st1		; {ny, dist}
+	fxch			; {dist, ny}
 	fld dword [rpos + 8]
 	fadd dword [delta]
 	fld dword [rpos + 4]
 	fld dword [rpos]
 	call distfield
-	fsubr			; {nz, ny, nx}
-	fxch st2		; {nx, ny, nz}
+	fsubr			; {nz, ny}
+	fxch			; {ny, nz}
+	fld dword [normal]	; {nx, ny, nz}
 	call normalize
 
 	; save normal
