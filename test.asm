@@ -30,6 +30,7 @@ rdir	resd 3
 rpos	resd 3
 normal	resd 3
 diffuse	resd 1
+frame	resd 1
 	
 	section .text
 main:
@@ -46,12 +47,20 @@ main:
 	push word 0a000h
 	pop es
 
+	mov dword [frame], 0
+
 .mainloop:
 	xor eax, eax
 	mov [winoffs], eax
 	call set_vmem_win	; reset vmem window
 	xor di, di		; di will be the vmem pointer within the window
 	mov ecx, VMEM_WIN_SIZE	; ecx will count down the vmem window bytes
+
+	; update the position of the metaballs
+	fild dword [frame]
+	call motion
+	inc dword [frame]
+
 	xor ebx, ebx		; ebx: y
 .yloop:
 	mov [py], ebx
@@ -124,7 +133,7 @@ main:
 	cmp ebx, 200
 	jnz .yloop
 	; end of yloop
-	
+
 	; check for keypress and loop back if there isn't one
 	push eax
 	in al, 60h
@@ -308,8 +317,11 @@ distfield:
 	fld dword [ballpos + 4]
 	fld dword [ballpos]
 	call distance
-	fld dword [ballrad]	; {rad, len}
-	fsub			; {len - rad}
+	fld1
+	fdivr
+
+	fld1
+	fsubr
 	ret
 
 ; shade(x, y, z, dist): (st0, st1, st2, st3) -> [st0, st1, st2]
@@ -388,6 +400,12 @@ shade:
 	fadd
 	fxch
 	fld st0
+	ret
+
+; motion(t): sets ballpos
+motion:
+	fcos
+	fstp dword [ballpos]
 	ret
 
 ;	section .bss
