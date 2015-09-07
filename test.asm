@@ -1,15 +1,20 @@
 ; vi:set filetype=nasm ts=8:
+%ifndef HOSTED
 	org 100h
 	bits 16
 
 	section .text
-	jmp main
+	jmp init
+%else
+	extern fb
+%endif
 
 %define VMEM_WIN_SIZE	65536
 %define MAX_STEPS	64
 
 	section .data
 f2	dd 2.0
+f8	dd 8.0
 f255	dd 255.0
 f160	dd 160.0
 f100	dd 100.0
@@ -20,6 +25,7 @@ ldir	dd -0.3419
 	dd 0.2279
 	dd -0.9116
 delta	dd 0.001
+frame_interval	dd 0.16
 
 	section .bss
 winoffs	resd 1
@@ -31,9 +37,11 @@ rpos	resd 3
 normal	resd 3
 diffuse	resd 1
 frame	resd 1
+sum	resd 1
 	
 	section .text
-main:
+%ifndef HOSTED
+init:
 	; make sure cr0 ts and em bits are clear to utilize the fpu
 	;mov eax, cr0
 	;and eax, 0fffffff3h
@@ -48,25 +56,38 @@ main:
 	pop es
 
 	mov dword [frame], 0
+%else
+	global display
+display:
+	mov dword [frame], eax
+%endif
 
 .mainloop:
+	; update the position of the metaballs
+	fild dword [frame]
+	fld dword [frame_interval]
+	fmul
+	call motion
+	inc dword [frame]
+
+%ifndef HOSTED
 	xor eax, eax
 	mov [winoffs], eax
 	call set_vmem_win	; reset vmem window
 	xor di, di		; di will be the vmem pointer within the window
 	mov ecx, VMEM_WIN_SIZE	; ecx will count down the vmem window bytes
-
-	; update the position of the metaballs
-	fild dword [frame]
-	call motion
-	inc dword [frame]
+%else
+	mov rdi, qword [fb]
+%endif
 
 	xor ebx, ebx		; ebx: y
 .yloop:
 	mov [py], ebx
 	xor eax, eax		; eax: x
 .xloop:
+%ifndef HOSTED
 	push ecx		; save byte counter
+%endif
 	mov [px], eax
 	xor eax, eax
 
@@ -105,6 +126,7 @@ main:
 	shr bx, 3
 	or ax, bx
 
+%ifndef HOSTED
 	mov [es:di], ax		; write packed pixel
 	inc di
 	inc di
@@ -121,6 +143,11 @@ main:
 	xor di, di		; reset the vmem pointer
 	mov ecx, VMEM_WIN_SIZE	; reset the counter
 .skip_winmove:
+%else
+	mov [rdi], ax
+	inc rdi
+	inc rdi
+%endif
 
 	mov eax, [px]
 	inc eax			; x++
@@ -134,6 +161,7 @@ main:
 	jnz .yloop
 	; end of yloop
 
+%ifndef HOSTED
 	; check for keypress and loop back if there isn't one
 	push eax
 	in al, 60h
@@ -151,6 +179,9 @@ main:
 	; exit
 	mov ax, 4c00h
 	int 21h
+%else
+	ret
+%endif
 
 ; set_vmem_win sets the window offset
 set_vmem_win:
@@ -313,15 +344,31 @@ distance:
 	
 ; distfield(x, y, z): (st0, st1, st2) -> st0
 distfield:
-	fld dword [ballpos + 8]
-	fld dword [ballpos + 4]
-	fld dword [ballpos]
+	mov edx, ballpos
+	mov eax, 0
+
+	fldz
+.ballsloop:
+	fstp dword [sum]
+
+	fld dword [edx + 8]
+	fld dword [edx + 4]
+	fld dword [edx]
 	call distance
 	fld1
 	fdivr
 
+	fld dword [sum]
+	fadd
+
+	add edx, 12
+	inc eax
+	cmp eax, 2
+	jnz .ballsloop
+
 	fld1
 	fsubr
+
 	ret
 
 ; shade(x, y, z, dist): (st0, st1, st2, st3) -> [st0, st1, st2]
@@ -404,14 +451,53 @@ shade:
 
 ; motion(t): sets ballpos
 motion:
-	fcos
-	fstp dword [ballpos]
+	xor ecx, ecx
+	mov edx, ballpos
+	fld st0
+.ballsloop:
+	fld st0
+	fadd dword [bphase + ecx * 4]
+	fsincos
+	fxch st2
+	fmul dword [f2]
+	fsincos
+	; fpstack: {cos(t*2), sin(t*2), sin(t), cos(t)}
+	
+	fld st2
+	fld st1
+	fmul dword [f2]
+	fadd
+	fstp dword [edx]
+
+	fld st3
+	fld st2
+	fmul dword [f2]
+	fadd
+	fstp dword [edx + 4]
+
+	fld dword [f8]
+	fstp dword [edx + 8]
+
+	;add edx, 12	; point to next ballpos
+	;inc ecx
+	;cmp ecx, 2
+	;jnz .ballsloop
 	ret
 
 ;	section .bss
-;ballpos resd 3
+;ballpos resd 6
 	section .data
-ballpos	dd 0.0
+boffsx	dd -1.0
+	dd 0.5
+boffsy	dd 0.0
+	dd -0.1
+bscalex	dd 1.0
+	dd 1.5
+bphase	dd 0.0
+	dd 0.5
+ballpos dd 0.0
 	dd 0.0
 	dd 8.0
-ballrad dd 1.0
+	dd 0.0
+	dd 0.0
+	dd 8.0
