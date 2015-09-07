@@ -35,6 +35,7 @@ int main(void)
 		SDL_Event ev;
 		while(SDL_PollEvent(&ev)) {
 			switch(ev.type) {
+			case SDL_QUIT:
 			case SDL_KEYDOWN:
 				goto done;
 			default:
@@ -43,7 +44,7 @@ int main(void)
 		}
 
 		msec = SDL_GetTicks() - start_time;
-		display(msec / 33);
+		display(msec / 70);
 
 		if(SDL_MUSTLOCK(surf)) {
 			SDL_LockSurface(surf);

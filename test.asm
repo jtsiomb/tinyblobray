@@ -10,22 +10,30 @@
 %endif
 
 %define VMEM_WIN_SIZE	65536
-%define MAX_STEPS	64
+%define MAX_STEPS	32
+%define NUM_BALLS	2
 
 	section .data
 f2	dd 2.0
-f8	dd 8.0
 f255	dd 255.0
 f160	dd 160.0
 f100	dd 100.0
+f200	dd 200.0
 faspect	dd 1.333333
-dthres	dd 0.01
+dthres	dd 0.05
 farclip	dd 20.0
 ldir	dd -0.3419
 	dd 0.2279
 	dd -0.9116
 delta	dd 0.001
 frame_interval	dd 0.16
+
+bgsky	dd 0.832
+	dd 0.731
+	dd 0.902
+bggnd	dd 0.478
+	dd 0.300
+	dd 0.251
 
 	section .bss
 winoffs	resd 1
@@ -38,6 +46,7 @@ normal	resd 3
 diffuse	resd 1
 frame	resd 1
 sum	resd 1
+tmpvec	resd 3
 	
 	section .text
 %ifndef HOSTED
@@ -244,11 +253,22 @@ calc_pixel:
 	dec ecx
 	jnz .steploop
 .escape:
-	; didn't hit anything, return black
+	; didn't hit anything, return background
 	fstp st0
-	fldz
-	fldz
-	fldz
+
+	mov ecx, 3
+	fild dword [py]
+	fdiv dword [f200]
+.bgloop:
+	fld st0		; {t, t}
+	dec ecx
+	fld dword [bgsky + ecx * 4]
+	fld dword [bggnd + ecx * 4]
+	call lerp	; {val, t ... }
+	fxch
+	cmp ecx, 0
+	jnz .bgloop
+	fstp st0
 	ret
 .done:
 	; success (distance is still in st0)
@@ -280,6 +300,14 @@ calc_prim_dir:
 	fstp dword [rdir]	; store x
 	fstp dword [rdir + 4]	; store y
 	fstp dword [rdir + 8]	; store z
+	ret
+
+; lerp(a, b, t): (st0, st1, st2) -> st0
+lerp:	; a + (b - a) * t
+	fsub st1, st0
+	fxch st2
+	fmul
+	fadd
 	ret
 
 ; length(x [st0], y [st1], z [st2]): returns length in st0
@@ -335,11 +363,7 @@ distance:
 	fsub		; {az-bz, bx, ax, ay-by}
 	fxch st2	; {ax, bx, az-bz, ay-by}
 	fsub		; {dx, dz, dy}
-	fld st2		; {dy, dx, dz, dy}
-	fld st2		; {dz, dy, dx, dz, dy}
-	fld st2		; {dx, dz, dy, dx, dz, dy}
-	call dotproduct
-	fsqrt
+	call length
 	ret
 	
 ; distfield(x, y, z): (st0, st1, st2) -> st0
@@ -347,9 +371,17 @@ distfield:
 	mov edx, ballpos
 	mov eax, 0
 
+	fstp dword [tmpvec]
+	fstp dword [tmpvec + 4]
+	fstp dword [tmpvec + 8]
+
 	fldz
 .ballsloop:
 	fstp dword [sum]
+
+	fld dword [tmpvec + 8]
+	fld dword [tmpvec + 4]
+	fld dword [tmpvec]
 
 	fld dword [edx + 8]
 	fld dword [edx + 4]
@@ -363,12 +395,11 @@ distfield:
 
 	add edx, 12
 	inc eax
-	cmp eax, 2
+	cmp eax, NUM_BALLS
 	jnz .ballsloop
 
 	fld1
 	fsubr
-
 	ret
 
 ; shade(x, y, z, dist): (st0, st1, st2, st3) -> [st0, st1, st2]
@@ -451,53 +482,76 @@ shade:
 
 ; motion(t): sets ballpos
 motion:
-	xor ecx, ecx
 	mov edx, ballpos
-	fld st0
+	xor ecx, ecx
+	fld st0		; {t, t}
 .ballsloop:
-	fld st0
+	fld st0		; {t, t, t}
 	fadd dword [bphase + ecx * 4]
-	fsincos
-	fxch st2
-	fmul dword [f2]
-	fsincos
-	; fpstack: {cos(t*2), sin(t*2), sin(t), cos(t)}
+	fsincos		; {cos(t), sin(t), t, t}
+	fxch st2	; {t, sin(t), cos(t), t}
+	fmul dword [f2]	; {2t, sin(t), cos(t), t}
+	fadd dword [bphase + ecx * 4]
+	fsincos		; {cos(2t), sin(2t), sin(t), cos(t), t}
 	
-	fld st2
-	fld st1
-	fmul dword [f2]
-	fadd
+	fld st2		; {sin(t), ... +5}
+	fmul dword [boct1amp + ecx * 4]
+	fld st1		; {cos(2t), sin(t)*amp1, ... +5}
+	fmul dword [boct2amp + ecx * 4]	; {cos(2t)*amp2, sin(t)*amp1, ... +5}
+	fadd		; {sin(t)*amp1+cos(2t)*amp2, ... +5}
+	fmul dword [bscalex + ecx * 4]
+	fadd dword [boffsx + ecx * 4]
 	fstp dword [edx]
 
 	fld st3
+	fmul dword [boct1amp + ecx * 4]
 	fld st2
-	fmul dword [f2]
+	fmul dword [boct2amp + ecx * 4]
 	fadd
+	fmul dword [bscaley + ecx * 4]
+	fadd dword [boffsy + ecx * 4]
 	fstp dword [edx + 4]
 
-	fld dword [f8]
+	fld dword [ballz]
 	fstp dword [edx + 8]
 
-	;add edx, 12	; point to next ballpos
-	;inc ecx
-	;cmp ecx, 2
-	;jnz .ballsloop
+	fstp st0
+	fstp st0
+	fstp st0
+	fstp st0
+
+	add edx, 12
+	inc ecx
+	cmp ecx, NUM_BALLS
+	jnz .ballsloop
+
+	fstp st0
 	ret
 
-;	section .bss
-;ballpos resd 6
+	section .bss
+ballpos resd 9
 	section .data
+ballz	dd 10.0
 boffsx	dd -1.0
-	dd 0.5
+	dd 0.7
+	dd 0.0
 boffsy	dd 0.0
 	dd -0.1
-bscalex	dd 1.0
-	dd 1.5
+	dd 0.2
+bscalex	dd 1.5
+	dd -2.0
+	dd -0.8
+bscaley	dd 1.0
+	dd 2.0
+	dd 1.2
 bphase	dd 0.0
+	dd 2.3
+	dd 5.3
+boct1amp:
+	dd 1.0
+	dd 1.3
+	dd 1.1
+boct2amp:
 	dd 0.5
-ballpos dd 0.0
-	dd 0.0
-	dd 8.0
-	dd 0.0
-	dd 0.0
-	dd 8.0
+	dd 0.7
+	dd 0.6
