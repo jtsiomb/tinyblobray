@@ -1,3 +1,12 @@
 #!/bin/sh
 
+if [ -n "$1" ]; then
+	cp dosbox.conf dosbox.conf.bak
+	cat dosbox.conf.bak | sed "s/test\.com/$1\.com/" >dosbox.conf
+fi
+
 dosbox
+
+if [ -f dosbox.conf.bak ]; then
+	mv dosbox.conf.bak dosbox.conf
+fi

@@ -1,24 +1,20 @@
 ; vi:set filetype=nasm ts=8:
-%ifndef HOSTED
 	org 100h
 	bits 16
 
 	section .text
 	jmp init
-%else
-	extern fb
-%endif
 
 %define VMEM_WIN_SIZE	65536
 %define MAX_STEPS	32
 %define NUM_BALLS	2
 
 	section .data
-f2	dd 2.0
-f255	dd 255.0
-f160	dd 160.0
-f100	dd 100.0
-f200	dd 200.0
+w2	dw 2
+w255	dw 255
+w160	dw 160
+w100	dw 100
+w200	dw 200
 faspect	dd 1.333333
 dthres	dd 0.05
 farclip	dd 10.0
@@ -49,12 +45,11 @@ sum	resd 1
 tmpvec	resd 3
 	
 	section .text
-%ifndef HOSTED
 init:
 	; make sure cr0 ts and em bits are clear to utilize the fpu
-	;mov eax, cr0
-	;and eax, 0fffffff3h
-	;mov cr0, eax
+	;mov ax, cr0
+	;and ax, 0fffffff3h
+	;mov cr0, ax
 	finit
 
 	mov ax, 4f02h	; set video mode
@@ -65,11 +60,6 @@ init:
 	pop es
 
 	mov dword [frame], 0
-%else
-	global display
-display:
-	mov dword [frame], eax
-%endif
 
 .mainloop:
 	; update the position of the metaballs
@@ -79,32 +69,26 @@ display:
 	call motion
 	inc dword [frame]
 
-%ifndef HOSTED
 	xor eax, eax
 	mov [winoffs], eax
 	call set_vmem_win	; reset vmem window
 	xor di, di		; di will be the vmem pointer within the window
 	mov ecx, VMEM_WIN_SIZE	; ecx will count down the vmem window bytes
-%else
-	mov rdi, qword [fb]
-%endif
 
-	xor ebx, ebx		; ebx: y
+	xor bx, bx		; bx: y
 .yloop:
-	mov [py], ebx
-	xor eax, eax		; eax: x
+	mov [py], bx
+	xor ax, ax		; ax: x
 .xloop:
-%ifndef HOSTED
 	push ecx		; save byte counter
-%endif
-	mov [px], eax
-	xor eax, eax
+	mov [px], ax
+	xor ax, ax
 
 	fild dword [py]
 	fild dword [px]
 	call calc_pixel	; args: x(0), y(1). returns rgb(0,1,2)
 	; red result
-	fmul dword [f255]
+	fimul word [w255]
 	fistp dword [tmp]
 	mov ax, [tmp]
 	cmp ax, 255
@@ -114,7 +98,7 @@ display:
 	shl ax, 8
 	and ax, 0f800h
 	; green result
-	fmul dword [f255]
+	fimul word [w255]
 	fistp dword [tmp]
 	mov bx, [tmp]
 	cmp bx, 255
@@ -125,7 +109,7 @@ display:
 	and bx, 7e0h
 	or ax, bx
 	; blue result
-	fmul dword [f255]
+	fimul word [w255]
 	fistp dword [tmp]
 	mov bx, [tmp]
 	cmp bx, 255
@@ -135,14 +119,13 @@ display:
 	shr bx, 3
 	or ax, bx
 
-%ifndef HOSTED
 	mov [es:di], ax		; write packed pixel
 	inc di
 	inc di
 
 	; end of inner loop, check if we need to move the vmem window
 	pop ecx			; restore byte counter
-	sub ecx, 2		; (ecx counts bytes, 2 bytes per pixel)
+	sub ecx, 2		; (cx counts bytes, 2 bytes per pixel)
 	jnz .skip_winmove
 	; increment winoffs and call set_vmem_win with it
 	mov eax, [winoffs]
@@ -152,30 +135,24 @@ display:
 	xor di, di		; reset the vmem pointer
 	mov ecx, VMEM_WIN_SIZE	; reset the counter
 .skip_winmove:
-%else
-	mov [rdi], ax
-	inc rdi
-	inc rdi
-%endif
 
-	mov eax, [px]
-	inc eax			; x++
-	cmp eax, 320
+	mov ax, [px]
+	inc ax			; x++
+	cmp ax, 320
 	jnz .xloop
 	; end of xloop
 
-	mov ebx, [py]
-	inc ebx			; y++
-	cmp ebx, 200
+	mov bx, [py]
+	inc bx			; y++
+	cmp bx, 200
 	jnz .yloop
 	; end of yloop
 
-%ifndef HOSTED
 	; check for keypress and loop back if there isn't one
-	push eax
+	push ax
 	in al, 60h
 	mov dl, al
-	pop eax
+	pop ax
 	dec dl
 	jnz .mainloop
 
@@ -188,9 +165,6 @@ display:
 	; exit
 	mov ax, 4c00h
 	int 21h
-%else
-	ret
-%endif
 
 ; set_vmem_win sets the window offset
 set_vmem_win:
@@ -208,7 +182,7 @@ calc_pixel:
 	mov [rpos + 4], eax
 	mov [rpos + 8], eax
 
-	mov ecx, MAX_STEPS
+	mov cx, MAX_STEPS
 	fldz	; push dummy prev distance
 .steploop:
 	fstp st0 ; pop previous iteration distance
@@ -250,23 +224,23 @@ calc_pixel:
 	fadd
 	fstp dword [rpos + 8]
 
-	dec ecx
+	dec cx
 	jnz .steploop
 .escape:
 	; didn't hit anything, return background
 	fstp st0
 
-	mov ecx, 3
+	mov cx, 3
 	fild dword [py]
-	fdiv dword [f200]
+	fidiv word [w200]
 .bgloop:
 	fld st0		; {t, t}
-	dec ecx
+	dec cx
 	fld dword [bggnd + ecx * 4]
 	fld dword [bgsky + ecx * 4]
 	call lerp	; {val, t ... }
 	fxch
-	cmp ecx, 0
+	cmp cx, 0
 	jnz .bgloop
 	fstp st0
 	ret
@@ -281,13 +255,13 @@ calc_pixel:
 ; calc_prim_dir(x [st0], y [st1]): sets global rdir vector
 calc_prim_dir:
 	; x = 1.3333 * (px / 160.0 - 1.0)
-	fdiv dword [f160]	; st0 <- px / 160.0
+	fidiv word [w160]	; st0 <- px / 160.0
 	fld1
 	fsub			; st0 <- st0 - 1.0
 	fmul dword [faspect]	; st0 <- st0 * aspect
 	fxch			; exchange with st1 to work on py now
 	; y = 1.0 - (py / 100.0)
-	fdiv dword [f100]	; st0 <- py / 100.0
+	fidiv word [w100]	; st0 <- py / 100.0
 	fld1
 	fsubr			; st0 <- 1.0 - st0
 	; z = 1.0 / tan(50deg / 2.0) ~ 2.14... ~ PI - 1
@@ -368,8 +342,8 @@ distance:
 	
 ; distfield(x, y, z): (st0, st1, st2) -> st0
 distfield:
-	mov edx, ballpos
-	mov eax, 0
+	mov dx, ballpos
+	mov ax, 0
 
 	fstp dword [tmpvec]
 	fstp dword [tmpvec + 4]
@@ -393,9 +367,9 @@ distfield:
 	fld dword [sum]
 	fadd
 
-	add edx, 12
-	inc eax
-	cmp eax, NUM_BALLS
+	add dx, 12
+	inc ax
+	cmp ax, NUM_BALLS
 	jnz .ballsloop
 
 	fld1
@@ -482,15 +456,15 @@ shade:
 
 ; motion(t): sets ballpos
 motion:
-	mov edx, ballpos
-	xor ecx, ecx
+	mov dx, ballpos
+	xor cx, cx
 	fld st0		; {t, t}
 .ballsloop:
 	fld st0		; {t, t, t}
 	fadd dword [bphase + ecx * 4]
 	fsincos		; {cos(t), sin(t), t, t}
 	fxch st2	; {t, sin(t), cos(t), t}
-	fmul dword [f2]	; {2t, sin(t), cos(t), t}
+	fimul word [w2]	; {2t, sin(t), cos(t), t}
 	fadd dword [bphase + ecx * 4]
 	fsincos		; {cos(2t), sin(2t), sin(t), cos(t), t}
 	
@@ -512,7 +486,7 @@ motion:
 	fadd dword [boffsy + ecx * 4]
 	fstp dword [edx + 4]
 
-	fld dword [ballz]
+	fild word [ballz]
 	fstp dword [edx + 8]
 
 	fstp st0
@@ -520,9 +494,9 @@ motion:
 	fstp st0
 	fstp st0
 
-	add edx, 12
-	inc ecx
-	cmp ecx, NUM_BALLS
+	add dx, 12
+	inc cx
+	cmp cx, NUM_BALLS
 	jnz .ballsloop
 
 	fstp st0
@@ -531,7 +505,7 @@ motion:
 	section .bss
 ballpos resd 9
 	section .data
-ballz	dd 10.0
+ballz	dw 10
 boffsx	dd -1.0
 	dd 0.7
 ;	dd 0.0
