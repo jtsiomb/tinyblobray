@@ -2,12 +2,10 @@
 	org 100h
 	bits 16
 
-	section .text
-	jmp init
-
 %define VMEM_WIN_SIZE	65536
 %define MAX_STEPS	32
 %define NUM_BALLS	2
+%define SPECULAR
 
 	section .data
 w2	dw 2
@@ -50,7 +48,7 @@ init:
 	;mov ax, cr0
 	;and ax, 0fffffff3h
 	;mov cr0, ax
-	finit
+	;finit
 
 	mov ax, 4f02h	; set video mode
 	mov bx, 10eh	; 320x200x16 (565)
@@ -72,17 +70,14 @@ init:
 	xor eax, eax
 	mov [winoffs], eax
 	call set_vmem_win	; reset vmem window
-	xor di, di		; di will be the vmem pointer within the window
-	mov ecx, VMEM_WIN_SIZE	; ecx will count down the vmem window bytes
 
-	xor bx, bx		; bx: y
+	mov bx, 200		; bx: y
 .yloop:
 	mov [py], bx
-	xor ax, ax		; ax: x
+	mov ax, 320		; ax: x
 .xloop:
 	push ecx		; save byte counter
 	mov [px], ax
-	xor ax, ax
 
 	fild dword [py]
 	fild dword [px]
@@ -92,9 +87,9 @@ init:
 	fistp dword [tmp]
 	mov ax, [tmp]
 	cmp ax, 255
-	jbe .skip_redclamp
-	mov ax, 255
-.skip_redclamp:
+	;jbe .skip_redclamp
+	cmova ax, [w255]
+;.skip_redclamp:
 	shl ax, 8
 	and ax, 0f800h
 	; green result
@@ -102,9 +97,9 @@ init:
 	fistp dword [tmp]
 	mov bx, [tmp]
 	cmp bx, 255
-	jbe .skip_greenclamp
-	mov bx, 255
-.skip_greenclamp:
+;	jbe .skip_greenclamp
+	cmova bx, [w255]
+;.skip_greenclamp:
 	shl bx, 3
 	and bx, 7e0h
 	or ax, bx
@@ -113,9 +108,9 @@ init:
 	fistp dword [tmp]
 	mov bx, [tmp]
 	cmp bx, 255
-	jbe .skip_blueclamp
-	mov bx, 255
-.skip_blueclamp:
+;	jbe .skip_blueclamp
+	cmova bx, [w255]
+;.skip_blueclamp:
 	shr bx, 3
 	or ax, bx
 
@@ -132,19 +127,19 @@ init:
 	inc eax
 	call set_vmem_win
 	mov [winoffs], eax	; update winoffs memory with new value
-	xor di, di		; reset the vmem pointer
-	mov ecx, VMEM_WIN_SIZE	; reset the counter
 .skip_winmove:
 
 	mov ax, [px]
-	inc ax			; x++
-	cmp ax, 320
+	;inc ax			; x++
+	;cmp ax, 320
+	dec ax
 	jnz .xloop
 	; end of xloop
 
 	mov bx, [py]
-	inc bx			; y++
-	cmp bx, 200
+	;inc bx			; y++
+	;cmp bx, 200
+	dec bx
 	jnz .yloop
 	; end of yloop
 
@@ -172,6 +167,8 @@ set_vmem_win:
 	mov ax, 4f05h		; select window
 	xor bx, bx		; window A
 	int 10h
+	xor di, di		; di will be the vmem pointer within the window
+	mov ecx, VMEM_WIN_SIZE	; ecx will count down the vmem window bytes
 	ret
 
 ; calc_pixel(x [st0], y [st1]) -> r [st0], g [st1], b [st2]
@@ -236,8 +233,8 @@ calc_pixel:
 .bgloop:
 	fld st0		; {t, t}
 	dec cx
-	fld dword [bggnd + ecx * 4]
 	fld dword [bgsky + ecx * 4]
+	fld dword [bggnd + ecx * 4]
 	call lerp	; {val, t ... }
 	fxch
 	cmp cx, 0
@@ -254,16 +251,16 @@ calc_pixel:
 
 ; calc_prim_dir(x [st0], y [st1]): sets global rdir vector
 calc_prim_dir:
-	; x = 1.3333 * (px / 160.0 - 1.0)
+	; x = 1.3333 * (1.0 - px / 160.0)
 	fidiv word [w160]	; st0 <- px / 160.0
 	fld1
-	fsub			; st0 <- st0 - 1.0
+	fsubr			; st0 <- 1.0 - st0
 	fmul dword [faspect]	; st0 <- st0 * aspect
 	fxch			; exchange with st1 to work on py now
-	; y = 1.0 - (py / 100.0)
+	; y = py / 100.0 - 1.0
 	fidiv word [w100]	; st0 <- py / 100.0
 	fld1
-	fsubr			; st0 <- 1.0 - st0
+	fsub
 	; z = 1.0 / tan(50deg / 2.0) ~ 2.14... ~ PI - 1
 	fld1
 	fldpi
@@ -402,12 +399,14 @@ shade:
 	fld dword [normal]	; {nx, ny, nz}
 	call normalize
 
+%ifdef SPECULAR
 	; save normal
 	fst dword [normal]
 	fld st1
 	fstp dword [normal + 4]
 	fld st2
 	fstp dword [normal + 8]
+%endif
 
 	; calculate ndotl for diffuse
 	fld dword [ldir + 8]
@@ -415,6 +414,7 @@ shade:
 	fld dword [ldir]	; {lx, ly, lz, nx, ny, nz}
 	call dotproduct
 	fabs
+%ifdef SPECULAR
 	fstp dword [diffuse]	; save diffuse for later
 
 	; calculate half-angle vector (assume eyedir is [0, 0, -1])
@@ -433,18 +433,12 @@ shade:
 	call dotproduct
 	fabs
 	; raise it to the specular power
+	mov cx, 6
+.powloop:
 	fld st0
 	fmul	; 2nd
-	fld st0
-	fmul	; 4th
-	fld st0
-	fmul	; 8th
-	fld st0
-	fmul	; 16th
-	fld st0
-	fmul	; 32nd
-	fld st0
-	fmul	; 64th
+	dec cx
+	jnz .powloop
 
 	; let's make the color {spec, spec, diffuse + spec}
 	fld dword [diffuse]
@@ -452,6 +446,10 @@ shade:
 	fadd
 	fxch
 	fld st0
+%else	; no specular, just diffuse
+	fldz
+	fldz
+%endif
 	ret
 
 ; motion(t): sets ballpos
