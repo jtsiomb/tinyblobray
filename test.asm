@@ -85,6 +85,8 @@ display:
 	call set_vmem_win	; reset vmem window
 	xor di, di		; di will be the vmem pointer within the window
 	mov ecx, VMEM_WIN_SIZE	; ecx will count down the vmem window bytes
+
+	call wait_vsync
 %else
 	mov rdi, qword [fb]
 %endif
@@ -198,6 +200,19 @@ set_vmem_win:
 	mov ax, 4f05h		; select window
 	xor bx, bx		; window A
 	int 10h
+	ret
+
+; wait_vsync returns at the start of the vertical blank period
+wait_vsync:
+	mov dx, 3dah
+.vblank_end:
+	in al, dx
+	and al, 8h
+	jnz .vblank_end  ; wait until any partial vblank ends
+.vblank_start:
+	in al, dx
+	and al, 8h
+	jz .vblank_start  ; wait until next vblank starts
 	ret
 
 ; calc_pixel(x [st0], y [st1]) -> r [st0], g [st1], b [st2]
