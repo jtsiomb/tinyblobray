@@ -1,8 +1,8 @@
 obj = main.o test.o
 bin = test
 
-CFLAGS = -pedantic -Wall -g `pkg-config --cflags sdl`
-LDFLAGS = `pkg-config --libs sdl`
+CFLAGS = -pedantic -Wall -g -no-pie `pkg-config --cflags sdl`
+LDFLAGS = -no-pie `pkg-config --libs sdl`
 
 $(bin): $(obj)
 	$(CC) -o $@ $(obj) $(LDFLAGS)

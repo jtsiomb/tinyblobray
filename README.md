@@ -12,6 +12,8 @@ loading and running it.
 This program runs in 320x200 16bpp using VESA (VBE) 1.2, which should work on
 most graphics cards out there.
 
+![shots](http://nuclear.mutantstargoat.com/sw/misc/tinyblobray.gif)
+
 License
 -------
 Author: John Tsiombikas <nuclear@member.fsf.org>
